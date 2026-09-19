@@ -25,7 +25,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -41,6 +40,15 @@ import com.lin0721.linmusic.core.player.domain.lyricLineKey
 
 // 卡片尺寸比全屏背景小得多，模糊半径按比例调小，避免整块糊成一片看不出光斑层次
 private val LYRICS_CARD_BLUR_RADIUS = 32.dp
+
+// 预览区默认显示约四行歌词；当前行出现换行、翻译、音译或背景人声时，
+// 再按它的实际排版高度扩展，避免内容被固定比例的卡片裁掉。
+private val LyricItemSpacing = 14.dp
+private val LyricItemHeightEstimate = 36.dp
+private val CurrentLyricSingleLineHeight = 24.dp
+private const val VisibleLyricLines = 4
+private val LyricsBaseViewportHeight =
+    LyricItemHeightEstimate * VisibleLyricLines + LyricItemSpacing * (VisibleLyricLines - 1)
 
 // ────────────────────────────────────────────────────────────────────────────
 // 折叠播放页的歌词预览卡（流体光雾背景 + 自动滚动预览列表）
@@ -120,14 +128,26 @@ fun LyricsCard(
     val lightBlob = remember(base) { base.lighten(0.05f) }
     val darkBlob = remember(base) { base.darken(0.15f) }
 
-    val cardWidth = (LocalConfiguration.current.screenWidthDp - 32).dp
-    val cardHeight = cardWidth * 0.88f
+    val density = LocalDensity.current
+    val measuredItemHeights = remember(lyrics) { mutableStateMapOf<Int, Int>() }
+    // 当前句居中显示时，上下相邻歌词也在视口内；三句的翻译/音译都要参与高度计算。
+    val surroundingExtraHeight = (currentIndex - 1..currentIndex + 1).fold(0.dp) { total, index ->
+        val itemHeightPx = measuredItemHeights[index] ?: 0
+        total + with(density) {
+            (itemHeightPx.toDp() - CurrentLyricSingleLineHeight).coerceAtLeast(0.dp)
+        }
+    }
+    val targetViewportHeight = LyricsBaseViewportHeight + surroundingExtraHeight
+    val animatedViewportHeight by animateDpAsState(
+        targetValue = targetViewportHeight,
+        animationSpec = tween(300, easing = FastOutSlowInEasing),
+        label = "lyrics_viewport_height"
+    )
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = MelodiaSpacing.md, vertical = MelodiaSpacing.sm)
-            .height(cardHeight)
             .clip(RoundedCornerShape(InfoCardRadius))
             .clickable(onClick = onOpenFullScreen)
     ) {
@@ -150,7 +170,7 @@ fun LyricsCard(
         )
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .padding(20.dp)
         ) {
             Row(
@@ -178,24 +198,32 @@ fun LyricsCard(
 
             Spacer(modifier = Modifier.height(MelodiaSpacing.md))
 
-            if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp
+            Box(modifier = Modifier.height(animatedViewportHeight)) {
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                } else {
+                    LyricsPreview(
+                        lyrics = lyrics,
+                        currentIndex = currentIndex,
+                        activeIndices = activeIndices,
+                        highlightColor = highlightColor,
+                        viewportTargetHeight = targetViewportHeight,
+                        onItemHeightChanged = { index, height ->
+                            if (measuredItemHeights[index] != height) {
+                                measuredItemHeights[index] = height
+                            }
+                        }
                     )
                 }
-            } else {
-                LyricsPreview(
-                    lyrics = lyrics,
-                    currentIndex = currentIndex,
-                    activeIndices = activeIndices,
-                    highlightColor = highlightColor
-                )
             }
         }
     }
@@ -206,48 +234,52 @@ fun LyricsPreview(
     lyrics: List<LyricLine>,
     currentIndex: Int,
     activeIndices: Set<Int>,
-    highlightColor: Color
+    highlightColor: Color,
+    viewportTargetHeight: androidx.compose.ui.unit.Dp,
+    onItemHeightChanged: (Int, Int) -> Unit
 ) {
-    val itemSpacingDp = 14.dp
-    val itemHeightNoDpEst    = 36.dp
+    val itemSpacingDp = LyricItemSpacing
+    val itemHeightNoDpEst    = LyricItemHeightEstimate
     val itemHeightWithTransDpEst = 56.dp
     val itemStrideDp      = itemHeightNoDpEst + itemSpacingDp
 
     val density       = LocalDensity.current
     val lazyListState = rememberLazyListState()
-    var cardHeightPx by remember { mutableFloatStateOf(0f) }
+    var currentItemHeightPx by remember(currentIndex) { mutableIntStateOf(0) }
 
-    LaunchedEffect(currentIndex) {
+    // 高度与滚动位置使用同一个目标值同步动画，避免先按旧高度滚动、
+    // 高度变化后再二次跳转造成歌词抖动。
+    LaunchedEffect(currentIndex, viewportTargetHeight, currentItemHeightPx) {
         if (currentIndex < 0 || currentIndex >= lyrics.size) return@LaunchedEffect
 
-        val cardHeightDp = with(density) { cardHeightPx.toDp() }
-        val linesAboveCentre = (cardHeightDp / 2 / itemStrideDp).toInt()
+        val linesAboveCentre = (viewportTargetHeight / 2 / itemStrideDp).toInt()
 
         if (currentIndex < linesAboveCentre) {
             lazyListState.animateScrollToItem(index = 0, scrollOffset = 0)
             return@LaunchedEffect
         }
-        val currentLine = lyrics[currentIndex]
-        val hasTranslation = currentLine.translation != null || currentLine.romanization != null || currentLine.backgroundLine != null
-        val itemHeightPx     = with(density) {
-            if (hasTranslation) itemHeightWithTransDpEst.toPx() else itemHeightNoDpEst.toPx()
+
+        val fallbackHeightPx = with(density) {
+            val currentLine = lyrics[currentIndex]
+            val hasExtraContent = currentLine.translation != null ||
+                currentLine.romanization != null ||
+                currentLine.backgroundLine != null
+            if (hasExtraContent) itemHeightWithTransDpEst.toPx() else itemHeightNoDpEst.toPx()
         }
-        val centreOffsetPx = -(((cardHeightPx - itemHeightPx) / 2f).toInt())
-        lazyListState.animateScrollToItem(
-            index       = currentIndex,
-            scrollOffset = centreOffsetPx
-        )
+        val itemHeightPx = currentItemHeightPx.takeIf { it > 0 }?.toFloat() ?: fallbackHeightPx
+        val viewportTargetHeightPx = with(density) { viewportTargetHeight.toPx() }
+        val centreOffsetPx = -(((viewportTargetHeightPx - itemHeightPx) / 2f).toInt())
+        lazyListState.animateScrollToItem(index = currentIndex, scrollOffset = centreOffsetPx)
     }
 
     LazyColumn(
         state   = lazyListState,
         modifier = Modifier
             .fillMaxWidth()
-            .fillMaxHeight()
-            .onSizeChanged { cardHeightPx = it.height.toFloat() },
+            .fillMaxHeight(),
         verticalArrangement = Arrangement.spacedBy(itemSpacingDp),
         userScrollEnabled   = false,
-        contentPadding = PaddingValues(top = 0.dp, bottom = with(density) { (cardHeightPx / 2).toDp() })
+        contentPadding = PaddingValues(top = 0.dp, bottom = viewportTargetHeight / 2)
     ) {
         itemsIndexed(items = lyrics, key = ::lyricLineKey) { index, line ->
             val isCurrent = index in activeIndices
@@ -281,6 +313,16 @@ fun LyricsPreview(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(
+                        if (index in currentIndex - 1..currentIndex + 1) {
+                            Modifier.onSizeChanged {
+                                onItemHeightChanged(index, it.height)
+                                if (index == currentIndex) currentItemHeightPx = it.height
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
                     .graphicsLayer {
                         scaleX = animatedScale
                         scaleY = animatedScale
