@@ -34,6 +34,7 @@ import com.lin0721.linmusic.core.ui.theme.MelodiaSpacing
 import com.lin0721.linmusic.core.ui.theme.InfoCardRadius
 import com.lin0721.linmusic.core.ui.theme.darken
 import com.lin0721.linmusic.core.ui.theme.lighten
+import com.lin0721.linmusic.core.ui.theme.saturate
 import com.lin0721.linmusic.core.player.domain.LyricLine
 import com.lin0721.linmusic.core.player.domain.LyricAlignment
 import com.lin0721.linmusic.core.player.domain.lyricLineKey
@@ -124,9 +125,10 @@ fun LyricsCard(
         label = "dark_radius"
     )
 
-    val fillColor = remember(base) { base.darken(0.35f) }
-    val lightBlob = remember(base) { base.lighten(0.05f) }
-    val darkBlob = remember(base) { base.darken(0.15f) }
+    val vividBase = remember(base) { base.saturate(0.25f) }
+    val fillColor = remember(vividBase) { vividBase.darken(0.35f) }
+    val lightBlob = remember(vividBase) { vividBase.lighten(0.05f) }
+    val darkBlob = remember(vividBase) { vividBase.darken(0.15f) }
 
     val density = LocalDensity.current
     val measuredItemHeights = remember(lyrics) { mutableStateMapOf<Int, Int>() }

@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.lin0721.linmusic.core.ui.theme.darken
+import com.lin0721.linmusic.core.ui.theme.lighten
 import com.lin0721.linmusic.core.ui.theme.saturate
 
 enum class BackdropMode { Collapsed, Immersive }
@@ -125,6 +126,26 @@ fun PlayerBackdrop(
         BackdropMode.Immersive -> {
             val infiniteTransition = rememberInfiniteTransition(label = "fluid_mesh_fullscreen")
 
+            // 左上角亮斑：参数与歌词预览卡（LyricsCard）完全一致，两处视觉统一
+            val lightCenterX by infiniteTransition.animateFloat(
+                initialValue = 0.05f,
+                targetValue = 0.35f,
+                animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
+                label = "light_x"
+            )
+            val lightCenterY by infiniteTransition.animateFloat(
+                initialValue = 0.1f,
+                targetValue = 0.35f,
+                animationSpec = infiniteRepeatable(tween(14000, easing = LinearEasing), RepeatMode.Reverse),
+                label = "light_y"
+            )
+            val lightRadiusScale by infiniteTransition.animateFloat(
+                initialValue = 0.75f,
+                targetValue = 0.90f,
+                animationSpec = infiniteRepeatable(tween(8000, easing = LinearEasing), RepeatMode.Reverse),
+                label = "light_radius"
+            )
+
             val darkCenterX by infiniteTransition.animateFloat(
                 initialValue = 1.0f,
                 targetValue = 1.4f,
@@ -144,8 +165,9 @@ fun PlayerBackdrop(
                 label = "dark_radius"
             )
 
-            val vividBase = remember(base) { base.saturate(0.6f) }
+            val vividBase = remember(base) { base.saturate(0.25f) }
             val fillColor = remember(vividBase) { vividBase.darken(0.35f) }
+            val lightBlob = remember(vividBase) { vividBase.lighten(0.05f) }
             val darkBlob = remember(vividBase) { vividBase.darken(0.15f) }
 
             Box(modifier = modifier) {
@@ -157,6 +179,9 @@ fun PlayerBackdrop(
                             val baseSize = size.minDimension
                             drawSingleHueMesh(
                                 fill = fillColor,
+                                lightBlob = lightBlob,
+                                lightCenter = Offset(size.width * lightCenterX, size.height * lightCenterY),
+                                lightRadius = baseSize * lightRadiusScale,
                                 darkBlob = darkBlob,
                                 darkCenter = Offset(size.width * darkCenterX, size.height * darkCenterY),
                                 darkRadius = baseSize * darkRadiusScale
