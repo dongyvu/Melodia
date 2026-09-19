@@ -29,6 +29,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Keep the gesture navigation area transparent. The automatic edge-to-edge
+        // style enables Android's contrast scrim in light mode, which turns it white.
+        window.isNavigationBarContrastEnforced = false
         requestNotificationPermissionIfNeeded()
 
         // 监听悬浮歌词开关
