@@ -91,7 +91,7 @@ fun FullScreenLyricsRow(
             }
             line.translation?.let {
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(it, fontSize = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = textAlign, modifier = Modifier.fillMaxWidth())
+                Text(it, fontSize = 17.sp, color = Color.White.copy(alpha = 0.65f), textAlign = textAlign, modifier = Modifier.fillMaxWidth())
             }
             line.romanization?.let {
                 Spacer(modifier = Modifier.height(4.dp))
@@ -108,7 +108,7 @@ fun FullScreenLyricsRow(
                     }
                     background.translation?.let {
                         Spacer(modifier = Modifier.height(3.dp))
-                        Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), textAlign = backgroundAlign, modifier = Modifier.fillMaxWidth())
+                        Text(it, fontSize = 14.sp, color = Color.White.copy(alpha = 0.55f), textAlign = backgroundAlign, modifier = Modifier.fillMaxWidth())
                     }
                     background.romanization?.let {
                         Spacer(modifier = Modifier.height(2.dp))

@@ -14,6 +14,8 @@ import org.xml.sax.helpers.DefaultHandler
 object TtmlLyricParser {
     const val MAX_LENGTH = 2 * 1024 * 1024
     private const val TTML = "http://www.w3.org/ns/ttml"
+    private const val WORD_END_OVERRUN_TOLERANCE_MS = 10L
+    private data class LocalizedTranslation(val text: String, val priority: Int)
 
     fun parse(xml: String): List<LyricLine> {
         if (xml.isBlank() || xml.length > MAX_LENGTH ||
@@ -32,7 +34,7 @@ object TtmlLyricParser {
             val root = document.documentElement
             if (root.localName != "tt" || root.namespaceURI != TTML) return emptyList()
             val alignments = parseAgentAlignments(document)
-            val translations = parseExternalAnnotations(document, "translation")
+            val translations = parseExternalTranslations(document)
             val romanizations = parseExternalAnnotations(document, "transliteration")
             val lines = mutableListOf<LyricLine>()
             fun visit(node: Element, depth: Int) {
@@ -51,7 +53,7 @@ object TtmlLyricParser {
     private fun parseLine(
         p: Element,
         alignments: Map<String, LyricAlignment>,
-        translations: Map<String, String>,
+        translations: Map<String, LocalizedTranslation>,
         romanizations: Map<String, String>
     ): LyricLine? {
         val start = time(p.getAttribute("begin")) ?: return null
@@ -66,7 +68,8 @@ object TtmlLyricParser {
             start = start,
             end = end,
             alignment = alignment,
-            translation = p.directAnnotation("x-translation") ?: translations[key],
+            translation = listOfNotNull(p.directTranslation(), translations[key])
+                .minByOrNull { it.priority }?.text,
             romanization = p.directAnnotation("x-roman") ?: romanizations[key],
             backgroundLine = background
         )
@@ -86,7 +89,7 @@ object TtmlLyricParser {
             start = start,
             end = end,
             alignment = alignment,
-            translation = element.directAnnotation("x-translation"),
+            translation = element.directTranslation()?.text,
             romanization = element.directAnnotation("x-roman")
         )?.let(::stripBackgroundBrackets)
     }
@@ -151,10 +154,16 @@ object TtmlLyricParser {
                     val wordText = text.substring(before)
                     val begin = time(node.getAttribute("begin"))
                     val finish = time(node.getAttribute("end"))
-                    if (begin == null || finish == null || begin < previousStart || begin < start ||
-                        finish < begin || finish > end) validWords = false
+                    // Some AMLL files let a span end a few milliseconds after its
+                    // parent line (including a trailing punctuation mark). Clamp
+                    // only this rounding-sized overrun.
+                    val boundedFinish = finish?.let {
+                        if (it > end && it - end <= WORD_END_OVERRUN_TOLERANCE_MS) end else it
+                    }
+                    if (begin == null || boundedFinish == null || begin < previousStart || begin < start ||
+                        boundedFinish < begin || boundedFinish > end) validWords = false
                     else if (wordText.isNotBlank()) {
-                        parts += WordInfo(wordText, begin - start, finish - begin)
+                        parts += WordInfo(wordText, begin - start, boundedFinish - begin)
                         previousStart = begin
                     }
                     return
@@ -208,6 +217,22 @@ object TtmlLyricParser {
         }
     }
 
+    private fun parseExternalTranslations(document: Document): Map<String, LocalizedTranslation> {
+        val result = mutableMapOf<String, LocalizedTranslation>()
+        val containers = document.getElementsByTagNameNS("*", "translation")
+        for (i in 0 until containers.length) {
+            val container = containers.item(i) as? Element ?: continue
+            container.childElements().filter { it.localName == "text" }.forEach { text ->
+                val key = text.attribute("for") ?: return@forEach
+                val value = text.textContent.trim().takeIf(String::isNotEmpty) ?: return@forEach
+                val language = text.attribute("lang") ?: container.attribute("lang")
+                val candidate = LocalizedTranslation(value, translationPriority(language))
+                if (candidate.priority < (result[key]?.priority ?: Int.MAX_VALUE)) result[key] = candidate
+            }
+        }
+        return result
+    }
+
     private fun parseExternalAnnotations(document: Document, containerName: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
         val containers = document.getElementsByTagNameNS("*", containerName)
@@ -224,6 +249,25 @@ object TtmlLyricParser {
 
     private fun Element.directAnnotation(role: String): String? = childElements()
         .firstOrNull { it.role() == role }?.textContent?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun Element.directTranslation(): LocalizedTranslation? = childElements()
+        .filter { it.role() == "x-translation" }
+        .mapNotNull { span ->
+            span.textContent.trim().takeIf(String::isNotEmpty)?.let {
+                LocalizedTranslation(it, translationPriority(span.attribute("lang")))
+            }
+        }
+        .minByOrNull { it.priority }
+
+    private fun translationPriority(language: String?): Int {
+        val tag = language?.lowercase()?.replace('_', '-') ?: return 3
+        return when {
+            tag.startsWith("zh-hans") || tag == "zh-cn" || tag == "zh-sg" || tag == "zh-my" -> 0
+            tag == "zh" -> 1
+            tag.startsWith("zh-") -> 2
+            else -> 4
+        }
+    }
 
     private fun Element.role(): String? = attribute("role")
 

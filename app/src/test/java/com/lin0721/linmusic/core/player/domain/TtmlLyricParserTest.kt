@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TtmlLyricParserTest {
+    @Test fun inlineTranslationsPreferSimplifiedChineseOverFirstGermanEntry() {
+        val line = parse("""<t:p begin="1s" end="2s"><t:span begin="1s" end="2s">Flare</t:span><t:span m:role="x-translation" xml:lang="de-DE">Deutsche Übersetzung</t:span><t:span m:role="x-translation" xml:lang="zh-TW">繁體翻譯</t:span><t:span m:role="x-translation" xml:lang="zh-CN">简体翻译</t:span></t:p>""").single()
+        assertEquals("简体翻译", line.translation)
+    }
+
+    @Test fun externalSimplifiedTranslationWinsOverInlineGerman() {
+        val xml = """<tt xmlns="http://www.w3.org/ns/ttml" xmlns:m="http://www.w3.org/ns/ttml#metadata" xmlns:i="http://music.apple.com/lyric-ttml-internal"><head><metadata><i:translations><i:translation xml:lang="de-DE"><i:text for="L1">Deutsch</i:text></i:translation><i:translation xml:lang="zh-Hans"><i:text for="L1">简体中文</i:text></i:translation></i:translations></metadata></head><body><div><p begin="1s" end="2s" i:key="L1"><span begin="1s" end="2s">Flare</span><span m:role="x-translation" xml:lang="de-DE">Deutsch inline</span></p></div></body></tt>"""
+        assertEquals("简体中文", TtmlLyricParser.parse(xml).single().translation)
+    }
+
     @Test fun duetRomanizationBackgroundAndExternalAnnotations() {
         val xml = """
             <tt xmlns="http://www.w3.org/ns/ttml" xmlns:m="http://www.w3.org/ns/ttml#metadata" xmlns:i="http://music.apple.com/lyric-ttml-internal">
@@ -87,6 +97,17 @@ class TtmlLyricParserTest {
             assertEquals("hello", line.text)
             assertTrue(line.words.isEmpty())
         }
+    }
+
+    @Test fun tinyPunctuationOverrunKeepsWordTiming() {
+        val line = parse("""<t:p begin="18.630" end="23.060"><t:span begin="18.630" end="19.000">Then</t:span> <t:span begin="19.000" end="19.420">what</t:span> <t:span begin="21.550" end="23.060">fate</t:span><t:span begin="23.060" end="23.065">?</t:span></t:p>""").single()
+        assertEquals("Then what fate?", line.text)
+        assertEquals(4, line.words.size)
+        assertEquals(0L, line.words.last().durationMs)
+        assertEquals(line.durationMs, line.words.last().startOffsetMs)
+
+        val excessive = parse("""<t:p begin="18.630" end="23.060"><t:span begin="18.630" end="23.060">fate</t:span><t:span begin="23.060" end="23.071">?</t:span></t:p>""").single()
+        assertTrue(excessive.words.isEmpty())
     }
 
     @Test fun zeroDurationWordsAreSafeAndUntimedTextIsPreserved() {
