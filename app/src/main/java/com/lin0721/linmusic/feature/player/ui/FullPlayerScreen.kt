@@ -360,6 +360,7 @@ fun FullPlayerScreen(
             hazeState = hazeState,
             isPlaying = isPlaying,
             currentPositionProvider = currentPositionProvider,
+            lyricPositionProvider = viewModel.playerManager::currentPositionNow,
             duration = duration,
             playMode = playMode,
             onSeek = { timeMs ->

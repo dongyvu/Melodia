@@ -68,6 +68,7 @@ fun FullScreenLyricsView(
     onDragClose: () -> Unit = onClose,
     isPlaying: Boolean,
     currentPositionProvider: () -> Long,
+    lyricPositionProvider: () -> Long,
     duration: Long,
     onTogglePlay: () -> Unit,
     onPlayNext: () -> Unit,
@@ -81,28 +82,25 @@ fun FullScreenLyricsView(
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
-    // 播放器位置仍按原有频率采样；只为逐字扫色在相邻采样间按屏幕帧推算位置。
+    // 逐字扫色始终读取同一播放时钟；采样 Flow 只用于暂停时触发一次同步。
     val latestPositionProvider by rememberUpdatedState(currentPositionProvider)
+    val latestLyricPositionProvider by rememberUpdatedState(lyricPositionProvider)
     val latestDuration by rememberUpdatedState(duration)
     val lyricFramePosition = remember { mutableLongStateOf(currentPositionProvider()) }
     val lyricPositionProvider = remember { { lyricFramePosition.longValue } }
     LaunchedEffect(isPlaying, lyrics) {
         if (!isPlaying) {
-            snapshotFlow { latestPositionProvider() }.collect { lyricFramePosition.longValue = it }
+            snapshotFlow { latestPositionProvider() }.collect {
+                val position = latestLyricPositionProvider().coerceAtLeast(0L)
+                lyricFramePosition.longValue =
+                    if (latestDuration > 0L) position.coerceAtMost(latestDuration) else position
+            }
         } else {
-            var sampledPosition = Long.MIN_VALUE
-            var sampledAtFrameNs = 0L
             while (isActive) {
-                withFrameNanos { frameTimeNs ->
-                    val position = latestPositionProvider()
-                    if (position != sampledPosition) {
-                        sampledPosition = position
-                        sampledAtFrameNs = frameTimeNs
-                    }
-                    val elapsedMs = ((frameTimeNs - sampledAtFrameNs) / 1_000_000L).coerceAtLeast(0L)
-                    lyricFramePosition.longValue = (sampledPosition + elapsedMs)
-                        .let { if (latestDuration > 0L) it.coerceAtMost(latestDuration) else it }
-                }
+                withFrameNanos { }
+                val position = latestLyricPositionProvider().coerceAtLeast(0L)
+                lyricFramePosition.longValue =
+                    if (latestDuration > 0L) position.coerceAtMost(latestDuration) else position
             }
         }
     }

@@ -85,6 +85,18 @@ class PlayerManager(
     )
 
     val currentPosition: StateFlow<Long> = progress.currentPosition
+    // 播放服务与界面同进程。逐字绘制直接读 ExoPlayer 的播放时钟，避开
+    // MediaController 跨 Session 同步时的进度预测及随后的校正。
+    private var playbackPositionSource: (() -> Long?)? = null
+
+    internal fun setPlaybackPositionSource(source: (() -> Long?)?) {
+        playbackPositionSource = source
+    }
+
+    fun currentPositionNow(): Long = playbackPositionSource?.invoke()
+        ?: controllerHolder.currentPositionOrNull
+        ?: progress.currentPosition.value
+
     val duration: StateFlow<Long> = progress.duration
     val positionUpdateInterval: StateFlow<Long> = progress.updateInterval
     val sleepTimerRemaining: StateFlow<Long> = sleepTimer.remaining

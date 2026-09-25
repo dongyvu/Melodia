@@ -149,6 +149,9 @@ class MelodiaPlaybackService : MediaSessionService() {
             .setMediaSourceFactory(DefaultMediaSourceFactory(dynamicDataSourceFactory))
             .build()
         this.exoPlayer = localExoPlayer
+        playerManager.setPlaybackPositionSource {
+            localExoPlayer.currentPosition.takeIf { localExoPlayer.currentMediaItem != null }
+        }
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -245,6 +248,7 @@ class MelodiaPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        playerManager.setPlaybackPositionSource(null)
         AppLogger.i(TAG, "Service onDestroy instanceId=${System.identityHashCode(this)}")
         playerManager.release()
         playerManager.saveState()
@@ -547,6 +551,5 @@ class MelodiaPlaybackService : MediaSessionService() {
         ): Boolean = false
     }
 }
-
 
 
