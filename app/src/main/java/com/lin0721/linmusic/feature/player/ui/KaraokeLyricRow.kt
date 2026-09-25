@@ -13,15 +13,13 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,6 +51,50 @@ private class LyricLayoutInfo(
     val wordLayouts: List<WordLayout>,
     val lineLayouts: List<LineLayout>
 )
+
+internal data class KaraokeCharacterBox(val lineIndex: Int, val left: Float, val right: Float)
+
+internal data class KaraokeWordSegment(
+    val lineIndex: Int,
+    val left: Float,
+    val right: Float,
+    val startMs: Long,
+    val endMs: Long
+)
+
+// 一个计时词可能横跨自动换行。按视觉行分段，时间按各段可见字形宽度分配；
+// 空格由调用处过滤，避免换行空格的坐标被当成上一行的终点。
+internal fun splitTimedWordAcrossLines(
+    startMs: Long,
+    durationMs: Long,
+    characters: List<KaraokeCharacterBox>
+): List<KaraokeWordSegment> {
+    if (characters.isEmpty()) return emptyList()
+    val groups = mutableListOf<MutableList<KaraokeCharacterBox>>()
+    characters.forEach { character ->
+        if (groups.lastOrNull()?.lastOrNull()?.lineIndex == character.lineIndex) {
+            groups.last().add(character)
+        } else {
+            groups.add(mutableListOf(character))
+        }
+    }
+    val widths = groups.map { group -> group.sumOf { (it.right - it.left).coerceAtLeast(1f).toDouble() } }
+    val totalWidth = widths.sum()
+    var elapsedWidth = 0.0
+    return groups.mapIndexed { index, group ->
+        val start = startMs + (durationMs * elapsedWidth / totalWidth).toLong()
+        elapsedWidth += widths[index]
+        val end = if (index == groups.lastIndex) startMs + durationMs
+                  else startMs + (durationMs * elapsedWidth / totalWidth).toLong()
+        KaraokeWordSegment(
+            lineIndex = group.first().lineIndex,
+            left = group.minOf { it.left },
+            right = group.maxOf { it.right },
+            startMs = start,
+            endMs = end
+        )
+    }
+}
 
 // 扫色分界处的羽化带总宽度：过大像光晕、过小退化成硬竖线，16.dp 约一个字宽，观感最轻微
 private val KaraokeEdgeFeather: Dp = 16.dp
@@ -145,36 +187,6 @@ fun KaraokeLyricRow(
                 }
             }
 
-            val wordLayouts = line.words.mapIndexed { i, word ->
-                val range = wordRanges[i]
-                val lineIndex = layout.getLineForOffset(range.first)
-                val lineTop = layout.getLineTop(lineIndex)
-                val lineBottom = layout.getLineBottom(lineIndex)
-
-                val wordLeft = try {
-                    layout.getBoundingBox(range.first).left
-                } catch (e: Exception) {
-                    AppLogger.d(TAG, "歌词字符定位 getBoundingBox 失败，回退 getHorizontalPosition", e)
-                    layout.getHorizontalPosition(range.first, true)
-                }
-                val wordRight = try {
-                    layout.getBoundingBox(range.last).right
-                } catch (e: Exception) {
-                    AppLogger.d(TAG, "歌词字符定位 getBoundingBox 失败，回退 getHorizontalPosition", e)
-                    layout.getHorizontalPosition(range.last + 1, true)
-                }
-
-                WordLayout(
-                    startMs = word.startOffsetMs,
-                    endMs = word.startOffsetMs + word.durationMs,
-                    left = wordLeft,
-                    right = wordRight,
-                    top = lineTop,
-                    bottom = lineBottom,
-                    lineIndex = lineIndex
-                )
-            }
-
             val lineLayouts = (0 until layout.lineCount).map { lineIndex ->
                 LineLayout(
                     left = layout.getLineLeft(lineIndex),
@@ -182,6 +194,41 @@ fun KaraokeLyricRow(
                     top = layout.getLineTop(lineIndex),
                     bottom = layout.getLineBottom(lineIndex)
                 )
+            }
+
+            val wordLayouts = line.words.flatMapIndexed { i, word ->
+                val characterBoxes = wordRanges[i].mapNotNull { offset ->
+                    val character = line.text[offset]
+                    if (character.isWhitespace() ||
+                        (Character.isLowSurrogate(character) && offset > 0 && Character.isHighSurrogate(line.text[offset - 1]))) {
+                        null
+                    } else {
+                        val visualLine = layout.getLineForOffset(offset)
+                        try {
+                            val bounds = layout.getBoundingBox(offset)
+                            KaraokeCharacterBox(visualLine, bounds.left, bounds.right)
+                        } catch (e: Exception) {
+                            AppLogger.d(TAG, "歌词字符定位 getBoundingBox 失败，回退 getHorizontalPosition", e)
+                            KaraokeCharacterBox(
+                                visualLine,
+                                layout.getHorizontalPosition(offset, true),
+                                layout.getHorizontalPosition(offset + 1, true)
+                            )
+                        }
+                    }
+                }
+                splitTimedWordAcrossLines(word.startOffsetMs, word.durationMs, characterBoxes).map { segment ->
+                    val visualLine = lineLayouts[segment.lineIndex]
+                    WordLayout(
+                        startMs = segment.startMs,
+                        endMs = segment.endMs,
+                        left = segment.left.coerceIn(visualLine.left, visualLine.right),
+                        right = segment.right.coerceIn(visualLine.left, visualLine.right),
+                        top = visualLine.top,
+                        bottom = visualLine.bottom,
+                        lineIndex = segment.lineIndex
+                    )
+                }
             }
 
             LyricLayoutInfo(wordLayouts, lineLayouts)
@@ -207,8 +254,7 @@ fun KaraokeLyricRow(
         // 顶层高亮（已激活）歌词：
         // ·实色部分沿用 Path 硬裁剪（GPU clip，不重绘文本），仅当前演唱行的裁剪右缘外扩半个羽化带
         // ·柔边用 DstIn 横向渐变把羽化带压成 1→0 透明，消除已播/未播之间的硬竖线
-        // 进度读取全部发生在绘制阶段（graphicsLayer/draw），不触发重组；
-        // 每帧额外开销只有一次 O(字数) 的区间推导加一个小渐变矩形填充
+        // 进度只在绘制阶段读取，不触发重组；裁剪与羽化共用同一次区间推导。
         // 通过 Path 对每一行分别建立独立的裁剪矩形，防止单行歌词折行时产生漏光和干扰
         Text(
             text = line.text,
@@ -220,54 +266,33 @@ fun KaraokeLyricRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .graphicsLayer {
-                    val info = lyricLayoutInfo
-                    if (info == null || !isActive) {
-                        alpha = 0f
-                    } else {
-                        alpha = 1f
-                        clip = true
-                        // 离屏合成，让内层 DstIn 渐变只混合本层文字像素，不会擦除底层的灰色歌词与背景
-                        compositingStrategy = CompositingStrategy.Offscreen
-                        shape = object : Shape {
-                            override fun createOutline(
-                                size: Size,
-                                layoutDirection: LayoutDirection,
-                                density: Density
-                            ): Outline {
-                                val path = androidx.compose.ui.graphics.Path()
-                                val featherHalfPx = with(density) { (featherWidth / 2).toPx() }
-                                val relativeProgress = currentPositionProviderState.value() - line.timeMs
-                                val spans = computePlayedSpans(info, relativeProgress, featherHalfPx)
-
-                                info.lineLayouts.forEachIndexed { lineIndex, lineLayout ->
-                                    val clipRight = spans[lineIndex].clipRight
-                                    // 如果当前行存在已播放高亮范围，则将其生成裁剪矩形加入到 Path 中；
-                                    // 纵向严格等于行盒：行高已保证行盒互不重叠，任何外扩都会染到邻行字形
-                                    if (clipRight > lineLayout.left) {
-                                        path.addRect(
-                                            Rect(
-                                                left = lineLayout.left,
-                                                top = lineLayout.top,
-                                                right = clipRight.coerceIn(lineLayout.left, lineLayout.right),
-                                                bottom = lineLayout.bottom
-                                            )
-                                        )
-                                    }
-                                }
-
-                                return Outline.Generic(path)
-                            }
-                        }
-                    }
+                    alpha = if (lyricLayoutInfo != null && isActive) 1f else 0f
+                    // DstIn 只混合本层文字像素，不擦除底层灰色歌词与背景。
+                    compositingStrategy = CompositingStrategy.Offscreen
                 }
                 .drawWithContent {
-                    drawContent()
                     val info = lyricLayoutInfo
                     if (info != null && isActive) {
                         val featherHalfPx = (featherWidth / 2).toPx()
-                        if (featherHalfPx > 0f) {
-                            val relativeProgress = currentPositionProviderState.value() - line.timeMs
-                            val spans = computePlayedSpans(info, relativeProgress, featherHalfPx)
+                        val relativeProgress = currentPositionProviderState.value() - line.timeMs
+                        val spans = computePlayedSpans(info, relativeProgress, featherHalfPx)
+                        val path = Path()
+                        info.lineLayouts.forEachIndexed { lineIndex, lineLayout ->
+                            val clipRight = spans[lineIndex].clipRight
+                            if (clipRight > lineLayout.left) {
+                                path.addRect(
+                                    Rect(
+                                        left = lineLayout.left,
+                                        top = lineLayout.top,
+                                        right = clipRight.coerceIn(lineLayout.left, lineLayout.right),
+                                        bottom = lineLayout.bottom
+                                    )
+                                )
+                            }
+                        }
+                        clipPath(path) {
+                            this@drawWithContent.drawContent()
+                            if (featherHalfPx <= 0f) return@clipPath
                             val featherIndex = spans.indexOfFirst { it.featherCenterX != null }
                             if (featherIndex != -1) {
                                 val lineLayout = info.lineLayouts[featherIndex]
@@ -291,6 +316,8 @@ fun KaraokeLyricRow(
                                 }
                             }
                         }
+                    } else {
+                        drawContent()
                     }
                 }
         )

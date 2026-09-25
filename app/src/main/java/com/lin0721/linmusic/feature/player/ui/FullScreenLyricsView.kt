@@ -14,12 +14,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -43,6 +46,7 @@ import dev.chrisbanes.haze.hazeChild
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 // ────────────────────────────────────────────────────────────────────────────
 // 全屏歌词页：承载下拉关闭手势与滚动跟随状态，装配顶栏、歌词列表与播放控制
@@ -77,6 +81,32 @@ fun FullScreenLyricsView(
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
+    // 播放器位置仍按原有频率采样；只为逐字扫色在相邻采样间按屏幕帧推算位置。
+    val latestPositionProvider by rememberUpdatedState(currentPositionProvider)
+    val latestDuration by rememberUpdatedState(duration)
+    val lyricFramePosition = remember { mutableLongStateOf(currentPositionProvider()) }
+    val lyricPositionProvider = remember { { lyricFramePosition.longValue } }
+    LaunchedEffect(isPlaying, lyrics) {
+        if (!isPlaying) {
+            snapshotFlow { latestPositionProvider() }.collect { lyricFramePosition.longValue = it }
+        } else {
+            var sampledPosition = Long.MIN_VALUE
+            var sampledAtFrameNs = 0L
+            while (isActive) {
+                withFrameNanos { frameTimeNs ->
+                    val position = latestPositionProvider()
+                    if (position != sampledPosition) {
+                        sampledPosition = position
+                        sampledAtFrameNs = frameTimeNs
+                    }
+                    val elapsedMs = ((frameTimeNs - sampledAtFrameNs) / 1_000_000L).coerceAtLeast(0L)
+                    lyricFramePosition.longValue = (sampledPosition + elapsedMs)
+                        .let { if (latestDuration > 0L) it.coerceAtMost(latestDuration) else it }
+                }
+            }
+        }
+    }
+
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val screenHeightPx = remember(configuration.screenHeightDp, density) {
@@ -108,6 +138,7 @@ fun FullScreenLyricsView(
     // 拖动/点击跳转播放进度后，同时结束用户滚动态，恢复自动跟随当前歌词行
     val handleSeek: (Long) -> Unit = { timeMs ->
         isUserScrolling = false
+        lyricFramePosition.longValue = timeMs
         onSeek(timeMs)
     }
 
@@ -188,7 +219,7 @@ fun FullScreenLyricsView(
                 isLoading = isLoading,
                 isUserScrolling = isUserScrolling,
                 highlightColor = highlightColor,
-                currentPositionProvider = currentPositionProvider,
+                currentPositionProvider = lyricPositionProvider,
                 lazyListState = lazyListState,
                 viewportHeightPx = dragState.viewportHeightPx,
                 onViewportHeightChange = { height -> dragState.onViewportHeightChange(height) },

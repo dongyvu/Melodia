@@ -134,7 +134,7 @@ fun FullPlayerScreen(
         if (isLyricsFullScreen && isPlaying) {
             viewModel.playerManager.setPositionUpdateInterval(50L)
         } else {
-            viewModel.playerManager.setPositionUpdateInterval(1000L)
+            viewModel.playerManager.setPositionUpdateInterval(200L)
         }
         onDispose {
             viewModel.playerManager.setPositionUpdateInterval(1000L)
