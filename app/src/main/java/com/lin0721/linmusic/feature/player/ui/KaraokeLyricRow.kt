@@ -119,7 +119,7 @@ private fun computePlayedSpans(
             PlayedSpan(clipRight = lineLayout.right, featherCenterX = null)
         } else {
             var maxRight = lineLayout.left
-            var featherCenterX: Float? = null
+            var hasActiveWord = false
             info.wordLayouts.forEach { word ->
                 if (word.lineIndex == lineIndex) {
                     if (relativeProgress >= word.endMs) {
@@ -131,14 +131,16 @@ private fun computePlayedSpans(
                         } else 1f
                         val edge = word.left + (word.right - word.left) * ratio
                         maxRight = maxRight.coerceAtLeast(edge)
-                        featherCenterX = edge
+                        hasActiveWord = true
                     }
                 }
             }
-            if (featherCenterX != null) {
+            if (hasActiveWord) {
+                // 已唱完的字形可能比当前字词的插值边缘更靠右（例如重叠的标点时间戳）。
+                // 羽化始终跟随真正的高亮右缘，避免渐变之后残留一条实色竖线。
                 PlayedSpan(
                     clipRight = (maxRight + featherHalfPx).coerceAtMost(lineLayout.right),
-                    featherCenterX = featherCenterX
+                    featherCenterX = maxRight
                 )
             } else {
                 PlayedSpan(clipRight = maxRight, featherCenterX = null)
@@ -299,8 +301,8 @@ fun KaraokeLyricRow(
                                 val centerX = spans[featherIndex].featherCenterX!!
                                 val left = (centerX - featherHalfPx).coerceAtLeast(lineLayout.left)
                                 val right = (centerX + featherHalfPx).coerceAtMost(lineLayout.right)
-                                // 羽化带纵向严格等于行盒，禁止外扩：带子是按 X 作用的，
-                                // 高出部分扫到下一行时会擦掉已播行的降部（灰尾巴），低了同理
+                                // 遮罩横向覆盖整行：渐变右侧必须透明，窄矩形 DstIn 会让未覆盖的
+                                // 裁剪区域保留白色细线。纵向仍严格限制在当前行盒内。
                                 if (right > left) {
                                     drawRect(
                                         brush = Brush.horizontalGradient(
@@ -309,8 +311,8 @@ fun KaraokeLyricRow(
                                             startX = left,
                                             endX = right
                                         ),
-                                        topLeft = Offset(left, lineLayout.top),
-                                        size = Size(right - left, lineLayout.bottom - lineLayout.top),
+                                        topLeft = Offset(lineLayout.left, lineLayout.top),
+                                        size = Size(lineLayout.right - lineLayout.left, lineLayout.bottom - lineLayout.top),
                                         blendMode = BlendMode.DstIn
                                     )
                                 }
