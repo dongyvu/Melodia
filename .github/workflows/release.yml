@@ -120,6 +120,12 @@ jobs:
       # 按 commit message 的 conventional commits 前缀（feat/fix/refactor...）自己分类生成
       - name: 生成分类日志
         run: |
+          if [ -f ".github/release-notes/${GITHUB_REF_NAME}.md" ]; then
+            cp ".github/release-notes/${GITHUB_REF_NAME}.md" release-notes.md
+            cat release-notes.md
+            exit 0
+          fi
+
           PREV_TAG=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
           RANGE="HEAD"
           [ -n "$PREV_TAG" ] && RANGE="$PREV_TAG..HEAD"
