@@ -439,7 +439,7 @@ fun MelodiaNavigationBar(
     onNavigate: (Screen) -> Unit,
     onCreateClick: () -> Unit,
     isCreateMenuOpen: Boolean,
-    showCreateEntry: Boolean = true,
+    showCreateEntry: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(

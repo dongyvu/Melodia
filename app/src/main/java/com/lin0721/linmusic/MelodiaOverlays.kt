@@ -67,7 +67,7 @@ fun MelodiaBottomOverlay(
     onCreateDismiss: () -> Unit,
     onNavigate: (Screen) -> Unit,
     onCreateClick: () -> Unit,
-    showCreateEntry: Boolean = true,
+    showCreateEntry: Boolean = false,
     onOverlayHeightChanged: (Dp) -> Unit = {}
 ) {
     val density = LocalDensity.current

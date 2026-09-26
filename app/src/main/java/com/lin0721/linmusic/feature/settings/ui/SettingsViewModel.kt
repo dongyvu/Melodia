@@ -78,7 +78,7 @@ class SettingsViewModel(
 
     val carMode = settingsPreferences.carMode.asState(false)
 
-    val showCreateEntry = settingsPreferences.showCreateEntry.asState(true)
+    val showCreateEntry = settingsPreferences.showCreateEntry.asState(false)
 
     val lyricTextSize = settingsPreferences.lyricTextSize.asState(14)
 

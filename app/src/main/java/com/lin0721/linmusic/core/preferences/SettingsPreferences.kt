@@ -248,7 +248,7 @@ class SettingsPreferences(private val context: Context) {
 
     // 底栏创建歌单快捷入口 Flow
     val showCreateEntry: Flow<Boolean> = context.settingsDataStore.data.map { prefs ->
-        prefs[KEY_SHOW_CREATE_ENTRY] ?: true
+        prefs[KEY_SHOW_CREATE_ENTRY] ?: false
     }
 
     suspend fun saveShowCreateEntry(enabled: Boolean) {

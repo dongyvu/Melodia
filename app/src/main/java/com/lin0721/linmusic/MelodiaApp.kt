@@ -52,7 +52,7 @@ private val SidebarWidth = 310.dp
 fun MelodiaApp() {
     val viewModel: HomeViewModel = koinViewModel()
     val settingsPreferences: SettingsPreferences = koinInject()
-    val showCreateEntry by settingsPreferences.showCreateEntry.collectAsStateWithLifecycle(initialValue = true)
+    val showCreateEntry by settingsPreferences.showCreateEntry.collectAsStateWithLifecycle(initialValue = false)
     val currentTrack by viewModel.playerManager.currentTrack.collectAsStateWithLifecycle()
     val previousQueueItem by viewModel.playerManager.previousQueueItem.collectAsStateWithLifecycle()
     val nextQueueItem by viewModel.playerManager.nextQueueItem.collectAsStateWithLifecycle()
