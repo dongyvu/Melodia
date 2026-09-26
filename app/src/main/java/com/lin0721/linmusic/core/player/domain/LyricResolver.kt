@@ -62,7 +62,7 @@ class LyricResolver {
             n.isNotEmpty() -> n to LyricSource.NETEASE
             else -> emptyList<LyricLine>() to LyricSource.NONE
         }
-        return LyricsResult(lines, source, when {
+        return LyricsResult(LyricTimeline.prepareLines(lines), source, when {
             lines.isEmpty() -> LyricFormat.EMPTY
             lines.any { it.words.isNotEmpty() } -> LyricFormat.WORD
             else -> LyricFormat.LINE

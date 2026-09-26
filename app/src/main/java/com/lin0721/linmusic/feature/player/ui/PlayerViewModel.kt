@@ -12,6 +12,7 @@ import com.lin0721.linmusic.core.model.ArtistInfo
 import com.lin0721.linmusic.core.log.AppLogger
 import com.lin0721.linmusic.core.player.domain.LyricLine
 import com.lin0721.linmusic.core.player.domain.LyricTimeline
+import com.lin0721.linmusic.core.player.domain.LyricPlaybackState
 import com.lin0721.linmusic.core.player.domain.LyricSource
 import com.lin0721.linmusic.core.player.domain.LyricFormat
 import com.lin0721.linmusic.core.player.domain.LyricsResult
@@ -141,6 +142,8 @@ class PlayerViewModel(
     val currentLyricIndex: StateFlow<Int> = primaryLyricIndex
     private val _activeLyricIndices = MutableStateFlow<Set<Int>>(emptySet())
     val activeLyricIndices: StateFlow<Set<Int>> = _activeLyricIndices.asStateFlow()
+    private var lyricPlaybackState = LyricPlaybackState()
+    private var lastLyricPositionMs: Long? = null
 
     private val _songDetailState = MutableStateFlow(PlayerSongDetailState())
     val songDetailState: StateFlow<PlayerSongDetailState> = _songDetailState.asStateFlow()
@@ -269,23 +272,30 @@ class PlayerViewModel(
     private fun clearState() {
         rawLyricsResult = null
         _songDetailState.value = PlayerSongDetailState()
+        lyricPlaybackState = LyricPlaybackState()
+        lastLyricPositionMs = null
         _primaryLyricIndex.value = -1
         _activeLyricIndices.value = emptySet()
+    }
+
+    private fun updateLyricPlayback(positionMs: Long, isSeek: Boolean = false) {
+        val lines = _songDetailState.value.lyrics
+        if (lines.isEmpty()) return
+        val previousPosition = lastLyricPositionMs
+        val discontinuity = previousPosition != null && (
+            positionMs < previousPosition - 250L ||
+                positionMs - previousPosition > maxOf(2000L, playerManager.positionUpdateInterval.value * 3)
+            )
+        lyricPlaybackState = LyricTimeline.advance(lines, positionMs, lyricPlaybackState, isSeek || discontinuity)
+        lastLyricPositionMs = positionMs
+        _activeLyricIndices.value = lyricPlaybackState.displayIndices
+        _primaryLyricIndex.value = lyricPlaybackState.primaryIndex
     }
 
     private fun observePosition() {
         viewModelScope.launch {
             playerManager.currentPosition.collectLatest { positionMs ->
-                val lines = _songDetailState.value.lyrics
-                if (lines.isEmpty()) return@collectLatest
-                val active = LyricTimeline.activeIndices(lines, positionMs)
-                _activeLyricIndices.value = active
-                _primaryLyricIndex.value = LyricTimeline.primaryIndex(
-                    lines = lines,
-                    positionMs = positionMs,
-                    activeIndices = active,
-                    previousPrimary = _primaryLyricIndex.value
-                )
+                updateLyricPlayback(positionMs)
             }
         }
     }
@@ -299,6 +309,10 @@ class PlayerViewModel(
             }.onFailure {
                 rawLyricsResult = null
                 _songDetailState.update { it.copy(lyrics = emptyList(), lyricsSourceLabel = null) }
+                lyricPlaybackState = LyricPlaybackState()
+                lastLyricPositionMs = null
+                _activeLyricIndices.value = emptySet()
+                _primaryLyricIndex.value = -1
             }
         }
         _songDetailState.update { it.copy(isLyricsLoading = false) }
@@ -327,6 +341,9 @@ class PlayerViewModel(
                 lyricsSourceLabel = listOfNotNull(source, format).joinToString(" · ").ifBlank { null }
             )
         }
+        lyricPlaybackState = LyricPlaybackState()
+        lastLyricPositionMs = null
+        updateLyricPlayback(playerManager.currentPosition.value, isSeek = true)
     }
 
     private fun observeLyricSettings() {
@@ -498,6 +515,7 @@ class PlayerViewModel(
 
     fun seekToTime(timeMs: Long) {
         playerManager.seekTo(timeMs)
+        updateLyricPlayback(timeMs, isSeek = true)
     }
 
     val sleepTimerRemaining: StateFlow<Long> = playerManager.sleepTimerRemaining
